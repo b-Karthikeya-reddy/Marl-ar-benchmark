@@ -1,81 +1,83 @@
 import numpy as np
+from pettingzoo import AECEnv
+from gymnasium import spaces
 
-class FurnitureEnv:
-    """
-    Simple 2-agent furniture placement environment.
-    - Room is represented as a grid
-    - Agent 1 (Layout Agent): Places furniture in the room
-    - Agent 2 (Style Agent): Rates the placement
-    """
-    
-    def __init__(self, room_width=10, room_height=10):
-        self.room_width = room_width
-        self.room_height = room_height
-        self.grid = np.zeros((room_width, room_height))
-        self.agents = ["layout_agent", "style_agent"]
-        self.furniture_placed = []
-        self.reset()
-    
-    def reset(self):
-        """Reset the environment"""
-        self.grid = np.zeros((self.room_width, self.room_height))
-        self.furniture_placed = []
-        print("Room reset! Empty grid ready.")
-        return self.grid
-    
-    def place_furniture(self, x, y, width, height):
-        """Layout agent places furniture at position x,y"""
-        # Check if furniture fits
-        if x + width > self.room_width or y + height > self.room_height:
-            print(f"Layout Agent: Furniture doesn't fit at ({x},{y})!")
-            return -1  # Negative reward
+class FurnitureEnv(AECEnv):
+    metadata = {"name": "furniture_env_v0"}
+
+    def __init__(self, room_size=10):
+        super().__init__()
+        self.room_size = room_size
         
-        # Check if space is already occupied
-        if np.any(self.grid[x:x+width, y:y+height] != 0):
-            print(f"Layout Agent: Space already occupied at ({x},{y})!")
-            return -1  # Negative reward
-        
-        # Place furniture
-        self.grid[x:x+width, y:y+height] = 1
-        self.furniture_placed.append({
-            'x': x, 'y': y, 
-            'width': width, 'height': height
-        })
-        print(f"Layout Agent: Placed furniture at ({x},{y}) size {width}x{height}")
-        return 1  # Positive reward
-    
-    def style_score(self):
-        """Style agent rates the current layout"""
-        if not self.furniture_placed:
-            return 0
-        
-        # Simple scoring: reward for space utilization
-        occupied = np.sum(self.grid)
-        total = self.room_width * self.room_height
-        utilization = occupied / total
-        
-        score = utilization * 100
-        print(f"Style Agent: Layout score = {score:.1f}%")
-        return score
-    
+        #started w the two agents, having a layout one and style one
+        self.possible_agents = ["layout_agent", "style_agent"]
+        self.agents = self.possible_agents[:]
+
+        self.observation_spaces = {
+            agent: spaces.Box(
+                low=0, high=1,
+                shape=(room_size, room_size),
+                dtype=np.float32
+            )
+            for agent in self.possible_agents
+        }
+
+        self.action_spaces = {
+            agent: spaces.Discrete(room_size * room_size)
+            for agent in self.possible_agents
+        }
+
+    def reset(self, seed=None, options=None):
+        self.agents = self.possible_agents[:]
+        self.room = np.zeros((self.room_size, self.room_size))
+        self.rewards = {agent: 0 for agent in self.agents}
+        self._cumulative_rewards = {agent: 0 for agent in self.agents}
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
+        self.infos = {agent: {} for agent in self.agents}
+        self.agent_selection = self.agents[0]
+        return self.observe(self.agent_selection), {}
+
+    def observe(self, agent):
+        return self.room.copy()
+
+    def step(self, action):
+        current_agent = self.agent_selection
+
+        # If agent is done, skip
+        if self.terminations[current_agent] or self.truncations[current_agent]:
+            self._was_dead_step(action)
+            return
+
+        # Convert action to (x, y) position
+        x = action // self.room_size
+        y = action % self.room_size
+
+        # Reset rewards each step
+        self.rewards = {"layout_agent": 0, "style_agent": 0}
+
+        # Hard constraint — can't place where furniture already exists
+        if self.room[x][y] == 1:
+            self.rewards[current_agent] = -10
+        else:
+            self.room[x][y] = 1
+            self.rewards[current_agent] = 1
+
+        # Space utilization bonus
+        utilization = np.sum(self.room) / (self.room_size ** 2)
+        if 0.3 < utilization < 0.7:
+            self.rewards[current_agent] += 2
+
+        # Mark only current agent as done
+        self.terminations[current_agent] = True
+
+        # Move to next agent
+        self.agent_selection = (
+            self.agents[1]
+            if current_agent == self.agents[0]
+            else self.agents[0]
+        )
+
     def render(self):
-        """Display the room grid"""
-        print("\nCurrent Room Layout:")
-        print("0 = empty, 1 = furniture")
-        print(self.grid)
-
-# Test the environment
-env = FurnitureEnv(room_width=10, room_height=10)
-
-print("=== Testing 2-Agent Furniture Placement ===\n")
-
-# Layout agent places furniture
-env.place_furniture(0, 0, 3, 2)  # Sofa
-env.place_furniture(4, 4, 2, 2)  # Coffee table
-env.place_furniture(7, 0, 2, 3)  # Bookshelf
-
-# Style agent rates the layout
-env.style_score()
-
-# Render the room
-env.render()
+        print(f"\nRoom Layout ({self.room_size}x{self.room_size}):")
+        print(self.room)
