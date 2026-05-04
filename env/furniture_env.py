@@ -5,9 +5,10 @@ from gymnasium import spaces
 class FurnitureEnv(AECEnv):
     metadata = {"name": "furniture_env_v0"}
 
-    def __init__(self, room_size=10):
+    def __init__(self, room_size=10, num_furniture=5):
         super().__init__()
         self.room_size = room_size
+        self.num_furniture = num_furniture
         
         #started w the two agents, having a layout one and style one
         self.possible_agents = ["layout_agent", "style_agent"]
@@ -36,6 +37,8 @@ class FurnitureEnv(AECEnv):
         self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
         self.agent_selection = self.agents[0]
+
+        self.placements = {"layout_agent": 0, "style_agent": 0}
         return self.observe(self.agent_selection), {}
 
     def observe(self, agent):
@@ -44,34 +47,31 @@ class FurnitureEnv(AECEnv):
     def step(self, action):
         current_agent = self.agent_selection
 
-        # If agent is done, skip
         if self.terminations[current_agent] or self.truncations[current_agent]:
             self._was_dead_step(action)
             return
 
-        # Convert action to (x, y) position
         x = action // self.room_size
         y = action % self.room_size
 
-        # Reset rewards each step
         self.rewards = {"layout_agent": 0, "style_agent": 0}
 
-        # Hard constraint — can't place where furniture already exists
         if self.room[x][y] == 1:
             self.rewards[current_agent] = -10
         else:
             self.room[x][y] = 1
             self.rewards[current_agent] = 1
+            self.placements[current_agent] += 1
 
-        # Space utilization bonus
         utilization = np.sum(self.room) / (self.room_size ** 2)
         if 0.3 < utilization < 0.7:
             self.rewards[current_agent] += 2
 
-        # Mark only current agent as done
-        self.terminations[current_agent] = True
+        self._cumulative_rewards[current_agent] += self.rewards[current_agent]
 
-        # Move to next agent
+        if self.placements[current_agent] >= self.num_furniture:
+            self.terminations[current_agent] = True
+
         self.agent_selection = (
             self.agents[1]
             if current_agent == self.agents[0]
@@ -81,3 +81,6 @@ class FurnitureEnv(AECEnv):
     def render(self):
         print(f"\nRoom Layout ({self.room_size}x{self.room_size}):")
         print(self.room)
+        utilization = np.sum(self.room) / (self.room_size ** 2) * 100
+        print(f"Space Utilization: {utilization:.1f}%")
+        print(f"Furniture Placed: {int(np.sum(self.room))}/{self.num_furniture * 2} pieces")
