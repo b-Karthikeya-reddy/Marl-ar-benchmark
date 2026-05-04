@@ -1,12 +1,13 @@
 from furniture_env import FurnitureEnv
 import numpy as np
 
-env = FurnitureEnv(room_size=10)
+env = FurnitureEnv(room_size=10, num_furniture=5)
 results = []
 
 for episode in range(5):
     env.reset()
     episode_rewards = {"layout_agent": 0, "style_agent": 0}
+    constraint_violations = 0
 
     for agent in env.agent_iter():
         observation, reward, termination, truncation, info = env.last()
@@ -16,11 +17,14 @@ for episode in range(5):
         else:
             action = env.action_space(agent).sample()
             env.step(action)
-            # Only capture reward when agent actually acted
+
+            if env.rewards[agent] == -10:
+                constraint_violations += 1
+
             episode_rewards[agent] += env.rewards[agent]
 
     results.append(episode_rewards)
-    print(f"Episode {episode + 1}: {episode_rewards}")
+    print(f"Episode {episode + 1}: Rewards={episode_rewards} | Violations={constraint_violations}")
     env.render()
 
 print("\nTest Results")
