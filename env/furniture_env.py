@@ -32,7 +32,7 @@ class FurnitureEnv(AECEnv):
         self.agents = self.possible_agents[:]
         self.room = np.zeros((self.room_size, self.room_size))
         self.rewards = {agent: 0 for agent in self.agents}
-        self._cumulative_rewards = {agent: 0 for agent in self.agents}
+        self._cumulative_rewards = {"layout_agent": 0, "style_agent": 0}
         self.terminations = {agent: False for agent in self.agents}
         self.truncations = {agent: False for agent in self.agents}
         self.infos = {agent: {} for agent in self.agents}
@@ -47,7 +47,7 @@ class FurnitureEnv(AECEnv):
     def step(self, action):
         current_agent = self.agent_selection
 
-        if self.terminations[current_agent] or self.truncations[current_agent]:
+        if self.terminations.get(current_agent, False) or self.truncations.get(current_agent, False):
             self._was_dead_step(action)
             return
 
@@ -71,6 +71,8 @@ class FurnitureEnv(AECEnv):
 
         if self.placements[current_agent] >= self.num_furniture:
             self.terminations[current_agent] = True
+
+        self._cumulative_rewards = {"layout_agent": self._cumulative_rewards.get("layout_agent", 0), "style_agent": self._cumulative_rewards.get("style_agent", 0)}
 
         self.agent_selection = (
             self.agents[1]

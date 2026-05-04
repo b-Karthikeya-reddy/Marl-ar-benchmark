@@ -9,19 +9,20 @@ for episode in range(5):
     episode_rewards = {"layout_agent": 0, "style_agent": 0}
     constraint_violations = 0
 
-    for agent in env.agent_iter():
-        observation, reward, termination, truncation, info = env.last()
+    for _ in range(env.num_furniture * 2):
+        agent = env.agent_selection
 
-        if termination or truncation:
+        if env.terminations[agent]:
             env.step(None)
-        else:
-            action = env.action_space(agent).sample()
-            env.step(action)
+            continue
 
-            if env.rewards[agent] == -10:
-                constraint_violations += 1
+        action = env.action_space(agent).sample()
+        env.step(action)
 
-            episode_rewards[agent] += env.rewards[agent]
+        if env.rewards[agent] == -10:
+            constraint_violations += 1
+
+        episode_rewards[agent] += env.rewards[agent]
 
     results.append(episode_rewards)
     print(f"Episode {episode + 1}: Rewards={episode_rewards} | Violations={constraint_violations}")
