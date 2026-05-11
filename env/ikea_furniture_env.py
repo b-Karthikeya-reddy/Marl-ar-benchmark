@@ -9,6 +9,7 @@ def load_ikea_data(csv_path="../datasets/ikea_furniture.csv"):
     df = pd.read_csv(csv_path)
     df = df.dropna(subset=['length', 'width'])
     # Normalize dimensions to grid units (divide by 30 to fit in 10x10 grid)
+    df = df[~df['category'].str.contains('Cushion|Throw|Spread', case=False)]
     df['grid_length'] = (df['length'] / 30).apply(lambda x: max(1, int(x)))
     df['grid_width'] = (df['width'] / 30).apply(lambda x: max(1, int(x)))
     return df
