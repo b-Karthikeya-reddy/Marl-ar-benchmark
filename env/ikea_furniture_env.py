@@ -52,38 +52,29 @@ EXCLUDED_CATEGORIES = [
 def load_ikea_data(csv_path="../datasets/ikea_furniture.csv", room_type="Living Room"):
     df = pd.read_csv(csv_path)
     df = df.dropna(subset=['length', 'width'])
-    
-    # Filter by mapped categories
     categories = ROOM_CATEGORIES.get(room_type, [])
-    df = df[df['room'].isin(categories)]
     
-    # Remove excluded categories
+    #added this to filter by room and category because the dataset is weird like that
+    df = df[df['room'].isin(categories) | df['category'].isin(categories)]
     df = df[~df['category'].isin(EXCLUDED_CATEGORIES)]
-    
-    # Filter out tiny items
-    df = df[df['length'] >= 40]
-    
+    df = df[df['length'] >= 40] #got rid of really small items
     df['grid_length'] = (df['length'] / 30).apply(lambda x: max(1, int(x)))
     df['grid_width'] = (df['width'] / 30).apply(lambda x: max(1, int(x)))
     return df
 
 class IKEAFurnitureEnv(AECEnv):
     metadata = {"name": "ikea_furniture_env_v0"}
-
-    # ADD room_type to the parameters here
     def __init__(self, room_size=10, num_furniture=5, room_type="Living Room"):
         super().__init__()
         self.room_size = room_size
         self.num_furniture = num_furniture
         self.room_type = room_type
         
-        # Pass the room_type to the data loader
         self.furniture_df = load_ikea_data(room_type=self.room_type)
         print(f"Loaded {len(self.furniture_df)} real IKEA furniture items for {self.room_type}!")
         
         self.possible_agents = ["layout_agent", "style_agent"]
         self.agents = self.possible_agents[:]
-
         self.observation_spaces = {
             agent: spaces.Box(
                 low=0, high=1,
