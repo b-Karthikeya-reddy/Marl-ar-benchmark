@@ -5,11 +5,64 @@ from gymnasium import spaces
 from collections import defaultdict
 
 # Load IKEA furniture data
-def load_ikea_data(csv_path="../datasets/ikea_furniture.csv"):
+ROOM_CATEGORIES = {
+    "Living Room": [
+        "Three-Seated Sofas", "Two-Seated Sofas", "ArmChairs", "FootStools",
+        "Cabinets and Display Cabinets", "Coffee and Side Tables",
+        "GRONLID System", "VIMLE System", "EKET System", "HAVSTA Systems",
+        "PLATSA Combinations", "VALENTUNA System", "LIDHULT System",
+        "SODERHAMN System", "KUNGSHAMN System", "Outdoor Sofas"
+    ],
+    "Bedroom": [
+        "Beds", "Mattresses", "Wardrobes", "Wordrobes",
+        "Chest of Drawers", "Bedside Tables", "Dressing Tables",
+        "Clothes Organizer", "Open Storage Wordrobes",
+        "Freestanding Wardrobes", "PAX Wardrobes",
+        "PLATSA Modular Storage System", "Drawer Units Storage Cabinets"
+    ],
+    "Kitchen": [
+        "Cookware", "Frying Pans and Woks", "Kitchen Appliances",
+        "Tableware", "DinnerWare", "Serveware", "Cooking Utensils",
+        "Kitchen Islands and Trolleys", "Kitchen Taps and Sinks",
+        "DishWasher", "Kithcen and Workshops"
+    ],
+    "Bathroom": [
+        "BathroomStorage", "BathroomAccessories", "Bathroom Wall Cabinets",
+        "BathroomSinkAccessories", "ToiletAccessories",
+        "Towels&Bathmats", "VanityUnits", "Towel40times70"
+    ],
+    "Home Office": [
+        "Office Desks", "Desks Chairs", "Desks Table and Legs",
+        "Wall Shelves", "Storage Boxes Baskets", "Paper & Media Organizers",
+        "Drawer Units Storage Cabinets", "Home Office Lighting"
+    ],
+    "Dining Room": [
+        "DinnerWare", "Tableware", "Serveware",
+        "Kitchen Islands and Trolleys", "Cooking Utensils"
+    ]
+}
+
+EXCLUDED_CATEGORIES = [
+    "Cushion and Cushion Covers", "BedSpreads and Throws",
+    "Sofa Covers", "Sofa Accessories and Legs",
+    "Decoration", "PaperShop", "Babies Tableware",
+    "BabyAccessories", "ChildSafety"
+]
+
+def load_ikea_data(csv_path="../datasets/ikea_furniture.csv", room_type="Living Room"):
     df = pd.read_csv(csv_path)
     df = df.dropna(subset=['length', 'width'])
-    # Normalize dimensions to grid units (divide by 30 to fit in 10x10 grid)
-    df = df[~df['category'].str.contains('Cushion|Throw|Spread', case=False)]
+    
+    # Filter by mapped categories
+    categories = ROOM_CATEGORIES.get(room_type, [])
+    df = df[df['room'].isin(categories)]
+    
+    # Remove excluded categories
+    df = df[~df['category'].isin(EXCLUDED_CATEGORIES)]
+    
+    # Filter out tiny items
+    df = df[df['length'] >= 40]
+    
     df['grid_length'] = (df['length'] / 30).apply(lambda x: max(1, int(x)))
     df['grid_width'] = (df['width'] / 30).apply(lambda x: max(1, int(x)))
     return df
@@ -17,14 +70,16 @@ def load_ikea_data(csv_path="../datasets/ikea_furniture.csv"):
 class IKEAFurnitureEnv(AECEnv):
     metadata = {"name": "ikea_furniture_env_v0"}
 
-    def __init__(self, room_size=10, num_furniture=5):
+    # ADD room_type to the parameters here
+    def __init__(self, room_size=10, num_furniture=5, room_type="Living Room"):
         super().__init__()
         self.room_size = room_size
         self.num_furniture = num_furniture
+        self.room_type = room_type
         
-        # Load real IKEA furniture
-        self.furniture_df = load_ikea_data()
-        print(f"Loaded {len(self.furniture_df)} real IKEA furniture items!")
+        # Pass the room_type to the data loader
+        self.furniture_df = load_ikea_data(room_type=self.room_type)
+        print(f"Loaded {len(self.furniture_df)} real IKEA furniture items for {self.room_type}!")
         
         self.possible_agents = ["layout_agent", "style_agent"]
         self.agents = self.possible_agents[:]
