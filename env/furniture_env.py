@@ -5,7 +5,7 @@ from gymnasium import spaces
 class FurnitureEnv(AECEnv):
     metadata = {"name": "furniture_env_v0"}
 
-    def __init__(self, room_size=10, num_furniture=5):
+    def __init__(self, room_size=15, num_furniture=5):
         super().__init__()
         self.room_size = room_size
         self.num_furniture = num_furniture
