@@ -1,9 +1,8 @@
 import numpy as np
 import pandas as pd
-from pettingzoo import AECEnv
+from pettingzoo import ParallelEnv
 from gymnasium import spaces
 from pathlib import Path
-from collections import defaultdict
 
 ROOM_CATEGORIES = {
     "Living Room": [
@@ -39,14 +38,7 @@ ROOM_CATEGORIES = {
     ],
 }
 
-EXCLUDED_CATEGORIES = [
-    "Cushion and Cushion Covers", "BedSpreads and Throws", "Sofa Covers", "Sofa Accessories and Legs",
-    "Decoration", "PaperShop", "Babies Tableware", "BabyAccessories", "ChildSafety", "Lighting",
-    "Rugs, mats & flooring", "Curtains & blinds", "Bed textiles", "Bathroom textiles",
-]
-
 OLD_DATASET = (Path(__file__).resolve().parents[1] / "datasets" / "ikea_furniture.csv")
-
 NEW_DATASET = (Path(__file__).resolve().parents[1] / "datasets" / "ikea_new_w_prices.csv")
 
 def load_furniture(room_type):
@@ -56,6 +48,7 @@ def load_furniture(room_type):
         "length": "depth_cm",
         "width": "width_cm"
     })
+
     old_df["name"] = old_df["category"]
     old_df["price"] = np.nan
     old_df = old_df[[
@@ -80,36 +73,23 @@ def load_furniture(room_type):
         "width_cm",
         "price"
     ]]
-
+    
     df = pd.concat([old_df, new_df], ignore_index=True)
     df = df.dropna(subset=["depth_cm", "width_cm"])
     categories = ROOM_CATEGORIES.get(room_type, [])
-
-    mask = (df["room"].isin(categories) | df["category"].isin(categories))
-    df = df[mask]
-    df = df[~df["category"].isin(EXCLUDED_CATEGORIES)]
-
-    df["grid_w"] = (
-        df["width_cm"] / 30
-    ).astype(int).clip(lower=1)
-
-    df["grid_h"] = (
-        df["depth_cm"] / 30
-    ).astype(int).clip(lower=1)
-
+    
+    df = df[df["room"].isin(categories) | df["category"].isin(categories)]
+    df["grid_w"] = (df["width_cm"] / 30).astype(int).clip(lower=1)
+    df["grid_h"] = (df["depth_cm"] / 30).astype(int).clip(lower=1)
     df["area"] = df["grid_w"] * df["grid_h"]
     return df.sort_values("area", ascending=False)
 
-class IKEAFurnitureEnv(AECEnv):
+
+class IKEAFurnitureEnv(ParallelEnv):
     metadata = {"name": "ikea_env"}
+    render_mode = "human"
     
-    def __init__(
-        self,
-        room_type="Living Room",
-        room_size=15,
-        budget_limit=2000,
-        target_utilization=0.5,
-    ):
+    def __init__(self, room_type="Living Room", room_size=15, budget_limit=2000, target_utilization=0.5):
         super().__init__()
 
         self.room_type = room_type
@@ -118,169 +98,76 @@ class IKEAFurnitureEnv(AECEnv):
         self.target_utilization = target_utilization
 
         self.furniture = load_furniture(room_type)
-        print(
-            f"\nLoaded {len(self.furniture)} "
-            f"IKEA furniture items "
-            f"for {room_type}"
-        )
-
         self.possible_agents = ["layout_agent", "style_agent", "budget_agent"]
-        self.agents = self.possible_agents[:]
-
-        obs_space = spaces.Box(
-            low=0,
-            high=1,
-            shape=(room_size, room_size),
-            dtype=np.float32,
-        )
-
-        act_space = spaces.Discrete(room_size * room_size)
         self.observation_spaces = {
-            a: obs_space for a in self.possible_agents
+            a: spaces.Box(0, 1, (room_size, room_size), np.float32)
+            for a in self.possible_agents
         }
-
         self.action_spaces = {
-            a: act_space for a in self.possible_agents
+            a: spaces.Discrete(room_size * room_size)
+            for a in self.possible_agents
         }
-
-    def observation_space(self, agent):
-        return self.observation_spaces[agent]
-
-    def action_space(self, agent):
-        return self.action_spaces[agent]
+        self.reset()
 
     def reset(self, seed=None, options=None):
-        self.room = np.zeros((self.room_size, self.room_size))
-        self.rewards = {a: 0 for a in self.possible_agents}
-        self.terminations = {a: False for a in self.possible_agents}
-        self.truncations = {a: False for a in self.possible_agents}
-        self.infos = {a: {} for a in self.possible_agents}
-        self._cumulative_rewards = defaultdict(float)
-        self.agent_selection = self.possible_agents[0]
+        self.room = np.zeros((self.room_size, self.room_size), dtype=np.float32)
+        self.agents = self.possible_agents[:]
+        self.rewards = {a: 0 for a in self.agents}
+        self.terminations = {a: False for a in self.agents}
+        self.truncations = {a: False for a in self.agents}
+        self.infos = {a: {} for a in self.agents}
         self.total_spend = 0
         self.steps = 0
-        self.placed_furniture = []
-        return self.observe(self.agent_selection), {}
+        return {a: self.observe() for a in self.agents}, self.infos
 
-    def observe(self, agent):
+    def observe(self):
         return self.room.copy()
 
-    def utilization(self):
-        return np.sum(self.room) / (self.room_size ** 2)
+    def util(self):
+        return float(np.mean(self.room))
 
-    def valid_position(self, x, y, w, h):
-        if x + w > self.room_size:
+    def valid(self, x, y, w, h):
+        if x + w > self.room_size or y + h > self.room_size:
             return False
+        return not np.any(self.room[x:x+w, y:y+h])
 
-        if y + h > self.room_size:
-            return False
-
-        return not np.any(
-            self.room[x:x+w, y:y+h]
-        )
-
-    def place_furniture(self, x, y, agent):
-        items = self.furniture.copy()
-
-        if agent == "budget_agent":
-            items = items.sort_values("price")
-
-        for item in items.itertuples():
-            w = int(item.grid_w)
-            h = int(item.grid_h)
-
-            if self.valid_position(x, y, w, h):
+    def place(self, x, y):
+        for item in self.furniture.itertuples():
+            w, h = int(item.grid_w), int(item.grid_h)
+            if self.valid(x, y, w, h):
                 self.room[x:x+w, y:y+h] = 1
-
-                price = (
-                    item.price
-                    if not np.isnan(item.price)
-                    else 0
-                )
-
+                price = 0 if np.isnan(item.price) else item.price
                 self.total_spend += price
-
-                self.placed_furniture.append({
-                    "agent": agent,
-                    "name": item.name,
-                    "category": item.category,
-                    "x": x,
-                    "y": y,
-                    "w": w,
-                    "h": h,
-                    "depth": item.depth_cm,
-                    "width": item.width_cm,
-                    "price": price,
-                })
-
                 return w * h
         return 0
 
-    def step(self, action):
-        agent = self.agent_selection
-
-        if self.terminations[agent]:
-            self._was_dead_step(action)
-            return
-
-        self.rewards = {a: 0 for a in self.possible_agents}
-        x = action // self.room_size
-        y = action % self.room_size
-        area = self.place_furniture(x, y, agent)
-
-        if area == 0:
-            reward = -1
-        else:
+    def step(self, actions):
+        rewards = {}
+        for agent, action in actions.items():
+            x = action // self.room_size
+            y = action % self.room_size
+            area = self.place(x, y)
             reward = area * 0.5
+            if area == 0:
+                reward -= 1
             if self.total_spend > self.budget_limit:
                 reward -= 5
-            if self.utilization() >= self.target_utilization:
+            if self.util() >= self.target_utilization:
                 reward += 10
-
-        self.rewards[agent] = reward
-        self._cumulative_rewards[agent] += reward
+            rewards[agent] = reward
+            
         self.steps += 1
+        done = self.util() >= self.target_utilization or self.steps >= 100
 
-        done = (
-            self.utilization() >= self.target_utilization
-            or self.steps >= 100
-        )
         if done:
-            for a in self.possible_agents:
-                self.terminations[a] = True
-
-        index = self.possible_agents.index(agent)
-        self.agent_selection = self.possible_agents[
-            (index + 1) % len(self.possible_agents)
-        ]
+            self.agents = []
+        obs = {a: self.observe() for a in self.possible_agents if a in self.agents}
+        terminations = {a: done for a in self.possible_agents}
+        truncations = {a: False for a in self.possible_agents}
+        infos = {a: {} for a in self.possible_agents}
+        return obs, rewards, terminations, truncations, infos
 
     def render(self):
-        print(f"Room Layout ({self.room_size}x{self.room_size}):")
         print(self.room)
-
-        print(
-            f"\nSpace Utilization: "
-            f"{self.utilization() * 100:.1f}%"
-        )
-
-        print(
-            f"Target Utilization: "
-            f"{self.target_utilization * 100:.1f}%"
-        )
-
-        print(
-            f"Total Spend: "
-            f"${self.total_spend:.2f}"
-        )
-
-        print("Furniture Placed:")
-
-        for item in self.placed_furniture:
-            print(
-                f"  [{item['agent']}] "
-                f"{item['category']} "
-                f"at ({item['x']},{item['y']}) "
-                f"size {item['w']}x{item['h']} "
-                f"({item['depth']}x{item['width']}cm) "
-                f"| ${item['price']:.2f}"
-            )
+        print("Util:", self.util())
+        print("Spend:", self.total_spend)
